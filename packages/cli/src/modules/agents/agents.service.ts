@@ -63,9 +63,12 @@ export class AgentsService {
 		{ agent: agents.Agent; agentId: string; userId?: string }
 	>(30 * Time.minutes.toMilliseconds);
 
-	/** Build a cache key that includes the user so different users get isolated runtimes. */
-	private runtimeKey(agentId: string, userId?: string): string {
-		return userId ? `${agentId}:${userId}` : agentId;
+	/** Build a cache key that includes the user and platform so different contexts get isolated runtimes. */
+	private runtimeKey(agentId: string, userId?: string, integrationType?: string): string {
+		const parts = [agentId];
+		if (userId) parts.push(userId);
+		if (integrationType) parts.push(integrationType);
+		return parts.join(':');
 	}
 
 	/** Remove all cached runtimes for an agent (across all users). */
@@ -357,6 +360,7 @@ export class AgentsService {
 		agentId: string,
 		projectId: string,
 		userId?: string,
+		integrationType?: string,
 	): Promise<void> {
 		// Resolve workflow tools — detect WorkflowTool markers in the tools list via
 		// tool.metadata.workflowTool. Both direct-mode compile and fromSchema
@@ -409,7 +413,7 @@ export class AgentsService {
 		const agentWithTools = agent as unknown as { tool: (t: unknown) => unknown };
 		try {
 			const { createRichInteractionTool } = await import('./integrations/rich-interaction-tool');
-			agentWithTools.tool(createRichInteractionTool());
+			agentWithTools.tool(createRichInteractionTool(integrationType));
 		} catch (toolError) {
 			this.logger.warn('Failed to inject rich_interaction tool', {
 				agentId,
@@ -432,6 +436,7 @@ export class AgentsService {
 		agentEntity: Agent,
 		credentialProvider: CredentialProvider,
 		userId?: string,
+		integrationType?: string,
 	): Promise<agents.Agent> {
 		if (!agentEntity.schema) {
 			throw new UserError(
@@ -458,6 +463,7 @@ export class AgentsService {
 			agentEntity.id,
 			agentEntity.projectId,
 			userId,
+			integrationType,
 		);
 
 		return reconstructed;
@@ -521,8 +527,9 @@ export class AgentsService {
 		userId: string,
 		projectId: string,
 		credentialProvider: CredentialProvider,
+		integrationType?: string,
 	): AsyncGenerator<StreamChunk> {
-		const key = this.runtimeKey(agentId, userId);
+		const key = this.runtimeKey(agentId, userId, integrationType);
 		let runtime = this.runtimes.get(key);
 		if (!runtime) {
 			// Scope the lookup to the project so an agent from a different project
@@ -534,6 +541,7 @@ export class AgentsService {
 				agentEntity,
 				credentialProvider,
 				userId,
+				integrationType,
 			);
 
 			// Cache the runtime for subsequent calls

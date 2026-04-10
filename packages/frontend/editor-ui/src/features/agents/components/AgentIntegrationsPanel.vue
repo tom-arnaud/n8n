@@ -5,7 +5,11 @@ import N8nSelect from '@n8n/design-system/components/N8nSelect';
 import N8nOption from '@n8n/design-system/components/N8nOption';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { makeRestApiRequest } from '@n8n/rest-api-client';
-import { connectSlack, disconnectSlack, getSlackStatus } from '../composables/useAgentApi';
+import {
+	connectIntegration,
+	disconnectIntegration,
+	getIntegrationStatus,
+} from '../composables/useAgentApi';
 
 const props = defineProps<{
 	projectId: string;
@@ -19,29 +23,77 @@ interface CredentialOption {
 	name: string;
 }
 
-const slackStatus = ref('disconnected');
-const connectedCredentialId = ref('');
-const selectedCredentialId = ref('');
-const loading = ref(false);
-const credentials = ref<CredentialOption[]>([]);
+interface IntegrationConfig {
+	type: string;
+	label: string;
+	icon: string;
+	description: string;
+	connectedDescription: string;
+	credentialTypes: string[];
+	noCredentialsMessage: string;
+}
+
+const integrationConfigs: IntegrationConfig[] = [
+	{
+		type: 'slack',
+		label: 'Slack',
+		icon: 'hashtag',
+		description:
+			'Connect a Slack bot credential to allow this agent to receive and respond to Slack messages.',
+		connectedDescription: 'Your agent is connected to Slack and can receive messages.',
+		credentialTypes: ['slackApi', 'slackOAuth2Api'],
+		noCredentialsMessage:
+			'No Slack API credentials found. Create a Slack API or Slack OAuth2 API credential in the Credentials page.',
+	},
+	{
+		type: 'telegram',
+		label: 'Telegram',
+		icon: 'paper-plane',
+		description:
+			'Connect a Telegram bot credential to allow this agent to receive and respond to Telegram messages.',
+		connectedDescription: 'Your agent is connected to Telegram and can receive messages.',
+		credentialTypes: ['telegramApi'],
+		noCredentialsMessage:
+			'No Telegram API credentials found. Create a Telegram API credential in the Credentials page.',
+	},
+];
+
+// Per-integration state
+const statuses = ref<Record<string, string>>({});
+const connectedCredentials = ref<Record<string, string>>({});
+const selectedCredentials = ref<Record<string, string>>({});
+const credentialsByType = ref<Record<string, CredentialOption[]>>({});
+const loadingMap = ref<Record<string, boolean>>({});
 const credentialsLoading = ref(false);
 
-async function fetchSlackStatus() {
+function isConnected(type: string): boolean {
+	return statuses.value[type] === 'connected';
+}
+
+function isLoading(type: string): boolean {
+	return loadingMap.value[type] ?? false;
+}
+
+async function fetchStatus() {
 	try {
-		const result = await getSlackStatus(rootStore.restApiContext, props.projectId, props.agentId);
-		slackStatus.value = result.status;
-		// Track which credential is connected so disconnect can use it
-		const slackIntegration = (result.integrations ?? []).find(
-			(i: { type: string }) => i.type === 'slack',
+		const result = await getIntegrationStatus(
+			rootStore.restApiContext,
+			props.projectId,
+			props.agentId,
 		);
-		if (slackIntegration) {
-			connectedCredentialId.value = slackIntegration.credentialId;
-		} else {
-			connectedCredentialId.value = '';
+		for (const config of integrationConfigs) {
+			statuses.value[config.type] = 'disconnected';
+			connectedCredentials.value[config.type] = '';
+		}
+		for (const integration of result.integrations ?? []) {
+			statuses.value[integration.type] = 'connected';
+			connectedCredentials.value[integration.type] = integration.credentialId;
 		}
 	} catch {
-		slackStatus.value = 'disconnected';
-		connectedCredentialId.value = '';
+		for (const config of integrationConfigs) {
+			statuses.value[config.type] = 'disconnected';
+			connectedCredentials.value[config.type] = '';
+		}
 	}
 }
 
@@ -51,47 +103,60 @@ async function fetchCredentials() {
 		const allCredentials = await makeRestApiRequest<
 			Array<{ id: string; name: string; type: string }>
 		>(rootStore.restApiContext, 'GET', '/credentials');
-		credentials.value = allCredentials
-			.filter((c) => c.type === 'slackApi' || c.type === 'slackOAuth2Api')
-			.map((c) => ({ id: c.id, name: c.name }));
+
+		for (const config of integrationConfigs) {
+			credentialsByType.value[config.type] = allCredentials
+				.filter((c) => config.credentialTypes.includes(c.type))
+				.map((c) => ({ id: c.id, name: c.name }));
+		}
 	} catch {
-		credentials.value = [];
+		for (const config of integrationConfigs) {
+			credentialsByType.value[config.type] = [];
+		}
 	} finally {
 		credentialsLoading.value = false;
 	}
 }
 
-async function onConnect() {
-	if (!selectedCredentialId.value) return;
-	loading.value = true;
+async function onConnect(type: string) {
+	const credId = selectedCredentials.value[type];
+	if (!credId) return;
+	loadingMap.value[type] = true;
 	try {
-		await connectSlack(
+		await connectIntegration(
 			rootStore.restApiContext,
 			props.projectId,
 			props.agentId,
-			selectedCredentialId.value,
+			type,
+			credId,
 		);
-		await fetchSlackStatus();
+		await fetchStatus();
 	} finally {
-		loading.value = false;
+		loadingMap.value[type] = false;
 	}
 }
 
-async function onDisconnect() {
-	const credId = connectedCredentialId.value || selectedCredentialId.value;
+async function onDisconnect(type: string) {
+	const credId = connectedCredentials.value[type] || selectedCredentials.value[type];
 	if (!credId) return;
-	loading.value = true;
+	loadingMap.value[type] = true;
 	try {
-		await disconnectSlack(rootStore.restApiContext, props.projectId, props.agentId, credId);
-		await fetchSlackStatus();
-		selectedCredentialId.value = '';
+		await disconnectIntegration(
+			rootStore.restApiContext,
+			props.projectId,
+			props.agentId,
+			type,
+			credId,
+		);
+		await fetchStatus();
+		selectedCredentials.value[type] = '';
 	} finally {
-		loading.value = false;
+		loadingMap.value[type] = false;
 	}
 }
 
 onMounted(async () => {
-	await Promise.all([fetchSlackStatus(), fetchCredentials()]);
+	await Promise.all([fetchStatus(), fetchCredentials()]);
 });
 </script>
 
@@ -99,19 +164,19 @@ onMounted(async () => {
 	<div :class="$style.panel">
 		<N8nText :class="$style.heading" tag="h3" bold>Integrations</N8nText>
 
-		<N8nCard :class="$style.card">
+		<N8nCard v-for="config in integrationConfigs" :key="config.type" :class="$style.card">
 			<template #header>
 				<div :class="$style.cardHeader">
 					<div :class="$style.statusRow">
 						<span
 							:class="[
 								$style.statusDot,
-								slackStatus === 'connected' ? $style.statusConnected : $style.statusDisconnected,
+								isConnected(config.type) ? $style.statusConnected : $style.statusDisconnected,
 							]"
 						/>
-						<N8nText bold>Slack</N8nText>
+						<N8nText bold>{{ config.label }}</N8nText>
 						<N8nText :class="$style.statusLabel" size="small">
-							{{ slackStatus === 'connected' ? 'Connected' : 'Disconnected' }}
+							{{ isConnected(config.type) ? 'Connected' : 'Disconnected' }}
 						</N8nText>
 					</div>
 				</div>
@@ -119,41 +184,42 @@ onMounted(async () => {
 
 			<div :class="$style.cardBody">
 				<N8nText :class="$style.description" size="small">
-					Connect a Slack bot credential to allow this agent to receive and respond to Slack
-					messages.
+					{{ config.description }}
 				</N8nText>
 
-				<div v-if="slackStatus !== 'connected'" :class="$style.connectForm">
+				<div v-if="!isConnected(config.type)" :class="$style.connectForm">
 					<label :class="$style.label">
-						<N8nText size="small" bold>Slack Credential</N8nText>
+						<N8nText size="small" bold>{{ config.label }} Credential</N8nText>
 					</label>
 					<N8nSelect
-						v-model="selectedCredentialId"
+						v-model="selectedCredentials[config.type]"
 						:class="$style.select"
 						placeholder="Select a credential..."
 						:loading="credentialsLoading"
-						:disabled="loading"
+						:disabled="isLoading(config.type)"
 						size="medium"
-						data-testid="slack-credential-select"
+						:data-testid="`${config.type}-credential-select`"
 					>
 						<N8nOption
-							v-for="cred in credentials"
+							v-for="cred in credentialsByType[config.type] ?? []"
 							:key="cred.id"
 							:value="cred.id"
 							:label="cred.name"
 						/>
 					</N8nSelect>
-					<N8nText v-if="credentials.length === 0 && !credentialsLoading" size="small">
-						No Slack API credentials found. Create a Slack API or Slack OAuth2 API credential in the
-						Credentials page.
+					<N8nText
+						v-if="(credentialsByType[config.type] ?? []).length === 0 && !credentialsLoading"
+						size="small"
+					>
+						{{ config.noCredentialsMessage }}
 					</N8nText>
 					<N8nButton
 						:class="$style.actionButton"
-						:disabled="!selectedCredentialId || loading"
-						:loading="loading"
+						:disabled="!selectedCredentials[config.type] || isLoading(config.type)"
+						:loading="isLoading(config.type)"
 						size="small"
-						data-testid="slack-connect-button"
-						@click="onConnect"
+						:data-testid="`${config.type}-connect-button`"
+						@click="onConnect(config.type)"
 					>
 						<N8nIcon icon="plug" :size="14" />
 						Connect
@@ -162,15 +228,15 @@ onMounted(async () => {
 
 				<div v-else :class="$style.disconnectSection">
 					<N8nText size="small">
-						Your agent is connected to Slack and can receive messages.
+						{{ config.connectedDescription }}
 					</N8nText>
 					<N8nButton
 						:class="$style.actionButton"
 						type="tertiary"
-						:loading="loading"
+						:loading="isLoading(config.type)"
 						size="small"
-						data-testid="slack-disconnect-button"
-						@click="onDisconnect"
+						:data-testid="`${config.type}-disconnect-button`"
+						@click="onDisconnect(config.type)"
 					>
 						<N8nIcon icon="unlink" :size="14" />
 						Disconnect
@@ -186,10 +252,13 @@ onMounted(async () => {
 	padding: var(--spacing--lg);
 	overflow-y: auto;
 	height: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing--sm);
 }
 
 .heading {
-	margin-bottom: var(--spacing--sm);
+	margin-bottom: 0;
 }
 
 .card {
