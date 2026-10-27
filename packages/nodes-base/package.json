@@ -963,11 +963,7 @@
     "@n8n/imap": "workspace:*",
     "@n8n/utils": "workspace:*",
     "@napi-rs/canvas": "catalog:",
-    "@napi-rs/canvas-linux-arm64-musl": "catalog:",
-    "@napi-rs/canvas-linux-x64-musl": "catalog:",
     "@napi-rs/image": "catalog:",
-    "@napi-rs/image-linux-arm64-musl": "catalog:",
-    "@napi-rs/image-linux-x64-musl": "catalog:",
     "@thednp/dommatrix": "^3.1.1",
     "alasql": "4.4.0",
     "amqplib": "0.10.6",
@@ -1040,6 +1036,12 @@
     "@e965/xlsx": "catalog:",
     "xml2js": "catalog:",
     "zod": "catalog:"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas-linux-arm64-musl": "catalog:",
+    "@napi-rs/canvas-linux-x64-musl": "catalog:",
+    "@napi-rs/image-linux-arm64-musl": "catalog:",
+    "@napi-rs/image-linux-x64-musl": "catalog:"
   },
   "license": "LicenseRef-n8n-sustainable-use"
 }

@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-and-format:
     name: Build & format
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: ${{ vars.RUNNER_PROVIDER == 'github' && 'ubuntu-latest' || 'blacksmith-4vcpu-ubuntu-2204' }}
     env:
       NODE_OPTIONS: '--max-old-space-size=7168'
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -71,7 +71,7 @@ jobs:
     name: Notify Slack on failure
     runs-on: ubuntu-latest
     needs: [unit-test, lint, build-and-format]
-    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    if: ${{ always() && github.repository == 'n8n-io/n8n' && contains(needs.*.result, 'failure') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
