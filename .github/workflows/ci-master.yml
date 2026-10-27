@@ -44,7 +44,7 @@ jobs:
     with:
       ref: ${{ github.sha }}
       nodeVersion: ${{ matrix.node-version }}
-      collectCoverage: ${{ matrix.node-version == '24.22.1' }}
+      collectCoverage: ${{ github.repository == 'n8n-io/n8n' && matrix.node-version == '24.22.1' }}
     secrets: inherit
 
   lint:
